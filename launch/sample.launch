@@ -1,0 +1,4 @@
+<launch>
+  <node pkg="arm_robot_jl_ros" type="simple_simulator.jl" name="julia_test_sub" output="screen" />
+  <node pkg="arm_robot_jl_ros" type="simple_controller.jl" name="julia_test_pub" output="screen" />
+</launch>
