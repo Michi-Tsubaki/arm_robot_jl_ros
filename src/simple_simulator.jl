@@ -3,7 +3,7 @@
 using Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 
-# --- Calculation Packages ---
+# Calculation Packages
 using CoordinateTransformations
 using GeometryBasics: Rect, Point3f, Vec3f
 using LinearAlgebra
@@ -12,25 +12,25 @@ using RigidBodyDynamics: Transform3D, CartesianFrame3D
 using Rotations
 using StaticArrays
 
-# --- Visualization Packages ---
+# Visualization Packages
 using MeshCat
 using MeshCatMechanisms
 using MechanismGeometries
 using Colors
 
-# --- ROS Packages ---
+# ROS Packages
 using RobotOS
 @rosimport geometry_msgs.msg: Pose
 rostypegen()
 using .geometry_msgs.msg
 
-# --- rospkg for finding files ---
+# rospkg for finding files
 using PyCall
 rospkg = pyimport("rospkg")
 rp = rospkg.RosPack()
 
 # Simulator state structure
-mutable struct DesktopManipulationDemo
+mutable struct MeshcatSimulator
     vis::Visualizer
     robot::Mechanism
     mvis::MechanismVisualizer
@@ -57,7 +57,7 @@ end
 """
 Sets the robot to an initial pose suitable for the task.
 """
-function initialize_robot_pose!(sim::DesktopManipulationDemo)
+function initialize_robot_pose!(sim::MeshcatSimulator)
     println("Initializing robot to a good starting pose...")
     reset_pose_dict = Dict(
         "CHEST_JOINT0" => deg2rad(0.0),
@@ -85,9 +85,7 @@ function initialize_robot_pose!(sim::DesktopManipulationDemo)
     println("Robot initialization complete.")
 end
 
-"""
-Robust Inverse Kinematics (IK) using RigidBodyDynamics.
-"""
+
 function jacobian_transpose_ik!(state::MechanismState,
                                target_body::RigidBody,
                                desired_pose::Transform3D;
@@ -101,7 +99,7 @@ function jacobian_transpose_ik!(state::MechanismState,
     for i in 1:iterations
         pos_error = translation(desired_pose) - translation(transform_to_root(state, target_body))
         if norm(pos_error) < tolerance
-            println("IK converged in $i iterations.")
+            #println("IK converged in $i iterations.")
             return configuration(state)
         end
         point_jacobian!(Jp, state, p, transform(state, tcp, world))
@@ -114,9 +112,6 @@ function jacobian_transpose_ik!(state::MechanismState,
     return configuration(state)
 end
 
-"""
-Safely finds the end-effector body for a given arm.
-"""
 function find_end_effector(robot::Mechanism, arm_name::String)
     candidates = arm_name == "RARM" ? ["RARM_JOINT5_Link", "RARM_JOINT6_Link"] : ["LARM_JOINT5_Link", "LARM_JOINT6_Link"]
     for name_candidate in candidates
@@ -129,10 +124,7 @@ function find_end_effector(robot::Mechanism, arm_name::String)
     error("Could not find any suitable end-effector body for '$arm_name'")
 end
 
-"""
-Generic IK solver wrapper.
-"""
-function solve_arm_ik(sim::DesktopManipulationDemo, arm_name::String, target_pose::Transform3D)
+function solve_arm_ik(sim::MeshcatSimulator, arm_name::String, target_pose::Transform3D)
     state = MechanismState(sim.robot)
     set_configuration!(state, sim.current_config)
     target_body = find_end_effector(sim.robot, arm_name)
@@ -144,52 +136,17 @@ function solve_arm_ik(sim::DesktopManipulationDemo, arm_name::String, target_pos
     end
 end
 
-"""
-Enhanced callback with proper Transform3D creation.
-"""
-function pose_callback(msg::Pose, sim::DesktopManipulationDemo)
+function pose_callback(msg::Pose, sim::MeshcatSimulator)
     try
         sim.message_count += 1
-        println("=== CALLBACK TRIGGERED === (Message #$(sim.message_count))")
-        println("Received pose:")
-        println("  Position: x=$(msg.position.x), y=$(msg.position.y), z=$(msg.position.z)")
-        println("  Orientation: w=$(msg.orientation.w), x=$(msg.orientation.x), y=$(msg.orientation.y), z=$(msg.orientation.z)")
-        
-        # Check current state before modification
-        println("  Current target_pose state: $(sim.target_pose === nothing ? "nothing" : "has_value")")
-        
-        # Create the transform using RigidBodyDynamics approach
         pos = msg.position
-        orient = msg.orientation
-        
-        println("  Creating translation vector...")
+        orient = msg.orientation        
         translation_vec = SVector(pos.x, pos.y, pos.z)
-        println("  Translation vector created: $translation_vec")
-        
-        println("  Creating rotation...")
         rotation = QuatRotation(orient.w, orient.x, orient.y, orient.z)
-        println("  Rotation created: $rotation")
-        
-        println("  Creating Transform3D...")
-        # Create a proper Transform3D for RigidBodyDynamics
-        # We need to specify frames - using a generic frame for now
         world_frame = CartesianFrame3D("world")
-        target_frame = CartesianFrame3D("target")
-        
-        # Create Transform3D properly
+        target_frame = CartesianFrame3D("target")        
         new_pose = Transform3D(world_frame, target_frame, rotation, translation_vec)
-        println("  Transform3D created successfully")
-        
-        println("  Setting target_pose...")
         sim.target_pose = new_pose
-        println("  target_pose set successfully")
-        
-        # Verify it was set
-        println("  Verification - target_pose is now: $(sim.target_pose === nothing ? "nothing" : "has_value")")
-        
-        println("Target pose received and stored. Processing will happen in main loop.")
-        println("=== CALLBACK END ===")
-        
     catch e
         println("ERROR IN CALLBACK: $e")
         println("Stack trace:")
@@ -197,15 +154,11 @@ function pose_callback(msg::Pose, sim::DesktopManipulationDemo)
             showerror(stdout, exc, bt)
             println()
         end
-        println("=== CALLBACK ERROR END ===")
     end
 end
 
-"""
-Main function with enhanced debugging but safer ROS calls.
-"""
+# main
 function main()
-    # --- Simulation Setup ---
     vis = Visualizer()
     open(vis)
 
@@ -222,84 +175,34 @@ function main()
     urdf_visuals = URDFVisuals(urdf_path, package_path=package_paths)
     mvis = MechanismVisualizer(robot, urdf_visuals, vis)
     
-    # Initialize the simulation state with `nothing` for the target pose and 0 message count
-    sim = DesktopManipulationDemo(vis, robot, mvis, zeros(num_positions(robot)), nothing, 0)
+    sim = MeshcatSimulator(vis, robot, mvis, zeros(num_positions(robot)), nothing, 0)
     
     initialize_robot_pose!(sim)
     create_environment(vis)
-    println("Robot visualization setup complete.")
 
-    # --- ROS Setup ---
-    println("Initializing ROS node...")
     init_node("robot_sim_controller")
-    println("ROS node 'robot_sim_controller' initialized successfully.")
-    
-    # Enhanced subscriber setup with debugging
-    println("Creating subscriber for '/larm_target_pose'...")
     sub = Subscriber{Pose}("larm_target_pose", pose_callback, (sim,), queue_size=1)
-    println("Subscriber created successfully.")
-    
-    println("\n" * "="^50)
-    println("ROS node initialized. Starting main processing loop...")
-    println("To move the left arm, publish a geometry_msgs/Pose to '/larm_target_pose'")
-    println("Example command:")
-    println("rostopic pub -1 /larm_target_pose geometry_msgs/Pose '{position: {x: 0.4, y: 0.2, z: 0.1}, orientation: {w: 1.0, x: 0.0, y: 0.0, z: 0.0}}'")
-    println("="^50)
-
-    # This main loop does the heavy lifting (IK calculation)
-    rate = Rate(10) # Set loop frequency to 10 Hz
+    rate = Rate(10)
     loop_count = 0
     
     while !is_shutdown()
-        loop_count += 1
-        
-        # Print status every 50 iterations (every 5 seconds at 10 Hz)
-        if loop_count % 50 == 0
-            println("Main loop running... (iteration $loop_count) - Messages received: $(sim.message_count)")
-            println("  - is_shutdown(): $(is_shutdown())")
-            println("  - target_pose is nothing: $(sim.target_pose === nothing)")
-        end
-        
-        # Check if the callback has stored a new target
         if sim.target_pose !== nothing
-            println("*** NEW TARGET DETECTED IN MAIN LOOP ***")
-            println("Processing target pose...")
-            println("  Target pose type: $(typeof(sim.target_pose))")
-            
-            # Make a local copy of the target
             currentTarget = sim.target_pose
-            println("  Local copy created")
-            
-            # Reset the shared target to `nothing` to indicate it has been processed
             sim.target_pose = nothing 
-            println("  Shared target reset to nothing")
-            
-            # Now, call the IK solver from the main loop, not the callback
-            println("Calling IK solver...")
             try
                 new_config = solve_arm_ik(sim, "LARM", currentTarget)
-                println("  IK solver completed successfully")
-                
-                # Update the robot's state
                 sim.current_config = new_config
                 set_configuration!(sim.mvis, new_config)
-                println("*** IK PROCESSING COMPLETE - Robot pose updated in visualizer ***")
             catch e
-                println("  ERROR in IK solver: $e")
-                println("  Stack trace:")
                 for (exc, bt) in Base.catch_stack()
                     showerror(stdout, exc, bt)
                     println()
                 end
             end
         end
-        
-        # rossleep allows ROS callbacks to be processed while controlling the loop rate
         rossleep(rate)
     end
 end
 
-# Main execution block
-if !isinteractive()
-    main()
-end
+# main
+main()
